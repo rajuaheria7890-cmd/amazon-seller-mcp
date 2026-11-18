@@ -8,6 +8,8 @@ from fastmcp.server.auth import RemoteAuthProvider
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from pydantic import AnyHttpUrl
 
+from listings import register_listing_tools
+
 INDIA = "A21TJRUUN4KGV"
 IST = ZoneInfo("Asia/Kolkata")
 BASE = "https://sellingpartnerapi-eu.amazon.com"
@@ -33,7 +35,7 @@ mcp = FastMCP("Amazon Seller India", auth=RemoteAuthProvider(
 ))
 
 
-async def amazon(path, params=None):
+async def amazon(path, params=None, *, method="GET", body=None, unwrap=True):
     async with httpx.AsyncClient(timeout=25) as client:
         login = await client.post("https://api.amazon.com/auth/o2/token", data={
             "grant_type": "refresh_token",
@@ -43,14 +45,15 @@ async def amazon(path, params=None):
         })
         if login.is_error:
             raise ValueError(f"Amazon LWA token exchange failed (HTTP {login.status_code}).")
-        response = await client.get(BASE + path, params=params, headers={
+        response = await client.request(method, BASE + path, params=params, json=body, headers={
             "x-amz-access-token": login.json()["access_token"],
             "User-Agent": "PersonalSellerMCP/1.0 (Language=Python)",
         })
         if response.is_error:
             request_id = response.headers.get("x-amzn-RequestId", "unavailable")
             raise ValueError(f"SP-API returned HTTP {response.status_code}, request ID {request_id}.")
-        return response.json()["payload"]
+        result = response.json()
+        return result["payload"] if unwrap else result
 
 
 @mcp.tool(annotations={"readOnlyHint": True})
@@ -71,6 +74,9 @@ async def india_daily_sales(day: date) -> list:
         "interval": f"{start.isoformat()}--{end.isoformat()}",
         "granularity": "Total",
     })
+
+
+register_listing_tools(mcp, amazon, INDIA)
 
 
 if __name__ == "__main__":
